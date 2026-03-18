@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOMA — リアルタイム歩行計測</title>
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SOMA">
+<link rel="apple-touch-icon" href="soma_icon.png">
+<meta name="theme-color" content="#0a0e1a">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
+:root{
+  --bg:#0a0e1a; --card:#111827; --card2:#1e2940;
+  --primary:#00d4ff; --primary-d:#0099bb;
+  --ok:#00ff88; --warn:#ffcc00; --danger:#ff4466;
+  --text:#e2e8f0; --sub:#64748b; --border:#1e3a5f;
+  --rad:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);
+  font-family:'Noto Sans JP',sans-serif;font-size:14px;min-height:100vh}
+
+/* ヘッダー */
+.header{background:linear-gradient(90deg,#0a0e1a,#0f2240);
+  padding:12px 20px;display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border)}
+.logo{font-size:22px;font-weight:700;letter-spacing:.12em;
+  background:linear-gradient(90deg,var(--primary),#a78bfa);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo-sub{font-size:10px;color:var(--sub);letter-spacing:.08em;margin-top:2px}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--sub);
+  display:inline-block;margin-right:6px;transition:.3s}
+.status-dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+
+/* メインレイアウト */
+.main{display:grid;grid-template-columns:1fr 380px;gap:0;height:calc(100vh - 52px)}
+
+/* カメラ側 */
+.camera-pane{position:relative;background:#000;overflow:hidden}
+#inputVideo{position:absolute;top:0;left:0;width:100%;height:100%;
+  object-fit:cover;transform:scaleX(-1)}
+#outputCanvas{position:absolute;top:0;left:0;width:100%;height:100%;
+  transform:scaleX(-1)}
+.cam-overlay{position:absolute;top:12px;left:12px;right:12px;
+  display:flex;justify-content:space-between;pointer-events:none}
+.cam-badge{background:rgba(0,0,0,.6);backdrop-filter:blur(8px);
+  border:1px solid rgba(0,212,255,.2);border-radius:8px;
+  padding:6px 12px;font-size:12px;color:var(--text)}
+.cam-badge strong{color:var(--primary);font-family:'JetBrains Mono'}
+
+/* 右パネル */
+.right-pane{background:var(--card);overflow-y:auto;
+  display:flex;flex-direction:column;border-left:1px solid var(--border)}
+
+/* コントロール */
+.ctrl-section{padding:16px;border-bottom:1px solid var(--border)}
+.ctrl-title{font-size:11px;font-weight:700;color:var(--sub);
+  letter-spacing:.1em;text-transform:uppercase;margin-bottom:10px}
+.btn-group{display:flex;gap:8px;flex-wrap:wrap}
+.btn{padding:9px 16px;border:none;border-radius:8px;
+  font-family:'Noto Sans JP';font-size:13px;font-weight:600;
+  cursor:pointer;transition:.2s;flex:1}
+.btn-start{background:var(--ok);color:#000}
+.btn-start:hover{filter:brightness(1.15)}
+.btn-stop{background:#334155;color:var(--text)}
+.btn-stop:hover{background:#475569}
+.btn-before{background:var(--primary);color:#000}
+.btn-before:hover{filter:brightness(1.15)}
+.btn-after{background:#ff4466;color:#fff}
+.btn-after:hover{filter:brightness(1.15)}
+.btn-save{background:#a78bfa;color:#fff;width:100%;margin-top:8px}
+.btn-save:hover{filter:brightness(1.15)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+
+/* ゲージ */
+.gauge-section{padding:16px;border-bottom:1px solid var(--border)}
+.gauge-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.gauge{background:var(--card2);border-radius:10px;padding:12px;
+  border:1px solid var(--border);position:relative;overflow:hidden}
+.gauge::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--primary);opacity:.3}
+.gauge.ok::before{background:var(--ok);opacity:.8}
+.gauge.warn::before{background:var(--warn);opacity:.8}
+.gauge.danger::before{background:var(--danger);opacity:.8}
+.g-label{font-size:10px;color:var(--sub);margin-bottom:4px;letter-spacing:.05em}
+.g-val{font-family:'JetBrains Mono';font-size:22px;font-weight:600;
+  color:var(--primary);line-height:1}
+.g-unit{font-size:10px;color:var(--sub);margin-left:3px}
+.g-bar-wrap{height:4px;background:rgba(255,255,255,.1);border-radius:99px;
+  margin-top:8px;overflow:hidden}
+.g-bar{height:100%;border-radius:99px;background:var(--primary);transition:.15s}
+
+/* リアルタイムチャート */
+.chart-section{padding:16px;border-bottom:1px solid var(--border);flex:1}
+canvas.rt-chart{width:100%;height:120px;display:block;border-radius:8px;
+  background:var(--card2);border:1px solid var(--border)}
+.chart-label{font-size:10px;color:var(--sub);margin:4px 0 8px}
+
+/* Before/After 比較 */
+.compare-section{padding:16px;border-bottom:1px solid var(--border)}
+.compare-grid{display:grid;grid-template-columns:1fr auto 1fr;
+  gap:6px;align-items:center;margin-top:10px}
+.cmp-col{background:var(--card2);border-radius:8px;padding:10px}
+.cmp-label{font-size:10px;color:var(--sub);margin-bottom:6px}
+.cmp-val{font-family:'JetBrains Mono';font-size:14px;font-weight:600}
+.cmp-arrow{text-align:center;font-size:18px}
+.diff-good{color:var(--ok)}
+.diff-bad{color:var(--danger)}
+.diff-neutral{color:var(--sub)}
+
+/* ヒールストライクログ */
+.hs-log{padding:12px 16px;max-height:120px;overflow-y:auto}
+.hs-item{font-family:'JetBrains Mono';font-size:11px;color:var(--sub);
+  padding:3px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.hs-item .hs-side{color:var(--primary);font-weight:600}
+
+/* Stage 判定 */
+.stage-section{padding:16px}
+.stage-indicator{border-radius:10px;padding:12px 14px;
+  border:1px solid var(--border);margin-top:8px}
+.stage-num{font-size:11px;color:var(--sub);margin-bottom:4px}
+.stage-name{font-size:13px;font-weight:700}
+
+/* ローディング */
+.loading{position:absolute;inset:0;background:rgba(10,14,26,.9);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font-size:14px;color:var(--sub);gap:12px;z-index:10}
+.spinner{width:40px;height:40px;border:3px solid var(--border);
+  border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* レスポンシブ */
+@media(max-width:768px){
+  .main{grid-template-columns:1fr;grid-template-rows:50vh 1fr}
+  .right-pane{overflow-y:auto}
+}
+</style>
+</head>
+<body>
+
+<!-- ヘッダー -->
+<div class="header">
+  <div>
+    <div class="logo">SOMA</div>
+    <div class="logo-sub">Somatic Observation & Motion Analysis</div>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText" style="color:var(--sub)">カメラ停止中</span>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- カメラペイン -->
+  <div class="camera-pane">
+    <video id="inputVideo" autoplay muted playsinline></video>
+    <canvas id="outputCanvas"></canvas>
+
+    <!-- リアルタイム数値オーバーレイ -->
+    <div class="cam-overlay">
+      <div class="cam-badge">
+        GT <strong id="overlayGT">—</strong>°
+        &nbsp;|&nbsp;
+        accel <strong id="overlayAC">—</strong>
+      </div>
+      <div class="cam-badge" id="hsIndicator" style="display:none">
+        <span style="color:var(--ok)">● HEEL STRIKE</span>
+      </div>
+    </div>
+
+    <!-- ローディング -->
+    <div class="loading" id="loadingOverlay">
+      <div class="spinner"></div>
+      <div>MediaPipe を読み込み中...</div>
+      <div style="font-size:11px;opacity:.6">初回は10〜20秒かかります</div>
+    </div>
+  </div>
+
+  <!-- 右パネル -->
+  <div class="right-pane">
+
+    <!-- コントロール -->
+    <div class="ctrl-section">
+      <div class="ctrl-title">計測コントロール</div>
+      <div class="btn-group">
+        <button class="btn btn-start" id="btnStart" onclick="startCamera()">▶ 開始</button>
+        <button class="btn btn-stop"  id="btnStop"  onclick="stopCamera()" disabled>⏹ 停止</button>
+      </div>
+      <div class="btn-group" style="margin-top:10px">
+        <button class="btn btn-before" id="btnBefore" onclick="recordBefore()" disabled>
+          🔵 Before 記録
+        </button>
+        <button class="btn btn-after" id="btnAfter" onclick="recordAfter()" disabled>
+          🔴 After 記録
+        </button>
+      </div>
+      <button class="btn btn-save" id="btnSave" onclick="saveResult()" disabled>
+        💾 セッション保存
+      </button>
+    </div>
+
+    <!-- ゲージ -->
+    <div class="gauge-section">
+      <div class="ctrl-title">リアルタイム指標</div>
+      <div class="gauge-row">
+        <div class="gauge" id="gaugeGT">
+          <div class="g-label">GT 全身傾斜</div>
+          <div><span class="g-val" id="valGT">—</span><span class="g-unit">°</span></div>
+          <div class="g-bar-wrap"><div class="g-bar" id="barGT" style="width:50%"></div></div>
+        </div>
+        <div class="gauge" id="gaugeAP">
+          <div class="g-label">Head_AP 変位</div>
+          <div><span class="g-val" id="valAP">—</span><span class="g-unit">rel</span></div>
+          <div class="g-bar-wrap"><div class="g-bar" id="barAP" style="width:50%"></div></div>
+        </div>
+        <div class="gauge" id="gaugePT">
+          <div class="g-label">PelvisTilt 骨盤</div>
+          <div><span class="g-val" id="valPT">—</span><span class="g-unit">°</span></div>
+          <div class="g-bar-wrap"><div class="g-bar" id="barPT" style="width:50%"></div></div>
+        </div>
+        <div class="gauge" id="gaugeHS">
+          <div class="g-label">踵接地 accel</div>
+          <div><span class="g-val" id="valHS">—</span><span class="g-unit">rel</span></div>
+          <div class="g-bar-wrap"><div class="g-bar" id="barHS" style="width:0%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- リアルタイムチャート -->
+    <div class="chart-section">
+      <div class="ctrl-title">GT 時系列</div>
+      <canvas class="rt-chart" id="gtChart" height="120"></canvas>
+      <div class="chart-label">参照帯：−13° 〜 +17°</div>
+      <canvas class="rt-chart" id="apChart" height="80"></canvas>
+      <div class="chart-label">Head_AP（相対変位）</div>
+    </div>
+
+    <!-- Before/After 比較 -->
+    <div class="compare-section">
+      <div class="ctrl-title">即時効果</div>
+      <div id="compareEmpty" style="font-size:12px;color:var(--sub);margin-top:8px">
+        Before / After を記録すると差分が表示されます
+      </div>
+      <div id="compareGrid" class="compare-grid" style="display:none">
+        <div class="cmp-col">
+          <div class="cmp-label">🔵 Before</div>
+          <div class="cmp-val" id="cmpBeforeGT" style="color:var(--primary)">—</div>
+          <div style="font-size:10px;color:var(--sub);margin-top:4px">GT°</div>
+        </div>
+        <div class="cmp-arrow" id="cmpArrow">→</div>
+        <div class="cmp-col">
+          <div class="cmp-label">🔴 After</div>
+          <div class="cmp-val" id="cmpAfterGT" style="color:#ff4466">—</div>
+          <div style="font-size:10px;color:var(--sub);margin-top:4px">GT°</div>
+        </div>
+      </div>
+      <div id="cmpMessage" style="font-size:13px;font-weight:600;margin-top:10px;display:none"></div>
+    </div>
+
+    <!-- ヒールストライクログ -->
+    <div>
+      <div style="padding:8px 16px;font-size:10px;color:var(--sub);
+        letter-spacing:.1em;text-transform:uppercase;border-bottom:1px solid var(--border)">
+        踵接地ログ
+      </div>
+      <div class="hs-log" id="hsLog">
+        <div style="font-size:11px;color:var(--sub);padding:4px 0">計測開始後に表示</div>
+      </div>
+    </div>
+
+    <!-- Stage 判定 -->
+    <div class="stage-section">
+      <div class="ctrl-title">現在の推定 Stage</div>
+      <div class="stage-indicator" id="stageIndicator">
+        <div class="stage-num">—</div>
+        <div class="stage-name" style="color:var(--sub)">計測開始後に判定</div>
+      </div>
+    </div>
+
+  </div><!-- /right-pane -->
+</div><!-- /main -->
+
+<!-- MediaPipe CDN -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin></script>
+
+<script>
+// ─── グローバル状態 ───
+let pose = null, camera = null, isRunning = false;
+const history = {gt:[], ap:[], hs:[]};
+const HIST = 200;
+let beforeRecord = null, afterRecord = null;
+let hsFlash = 0;
+const sessions = JSON.parse(localStorage.getItem('somaCamera')||'[]');
+
+// 参照帯
+const REF = {gt:{lo:-13,hi:17},pt:{lo:-27,hi:23}};
+
+// ─── カメラ・MediaPipe 初期化 ───
+async function startCamera(){
+  document.getElementById('loadingOverlay').style.display='flex';
+  try{
+    pose = new Pose({locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`});
+    pose.setOptions({
+      modelComplexity:1, smoothLandmarks:true,
+      enableSegmentation:false, smoothSegmentation:false,
+      minDetectionConfidence:0.6, minTrackingConfidence:0.6
+    });
+    pose.onResults(onResults);
+
+    const video = document.getElementById('inputVideo');
+    camera = new Camera(video, {
+      onFrame: async()=>{ await pose.send({image:video}); },
+      width:1280, height:720
+    });
+    await camera.start();
+
+    isRunning = true;
+    document.getElementById('statusDot').classList.add('live');
+    document.getElementById('statusText').textContent = '計測中';
+    document.getElementById('btnStart').disabled = true;
+    document.getElementById('btnStop').disabled = false;
+    document.getElementById('btnBefore').disabled = false;
+    document.getElementById('btnAfter').disabled = false;
+    document.getElementById('loadingOverlay').style.display='none';
+  } catch(e){
+    document.getElementById('loadingOverlay').innerHTML =
+      `<div style="color:#ff4466;text-align:center">
+        <div style="font-size:24px;margin-bottom:8px">⚠</div>
+        <div>カメラの起動に失敗しました</div>
+        <div style="font-size:11px;margin-top:6px;opacity:.7">${e.message}</div>
+        <div style="font-size:11px;margin-top:4px;opacity:.6">
+          https:// または localhost で開いてください
+        </div>
+      </div>`;
+  }
+}
+
+function stopCamera(){
+  if(camera) camera.stop();
+  isRunning = false;
+  document.getElementById('statusDot').classList.remove('live');
+  document.getElementById('statusText').textContent = 'カメラ停止中';
+  document.getElementById('btnStart').disabled = false;
+  document.getElementById('btnStop').disabled = true;
+}
+
+// ─── MediaPipe 結果処理 ───
+function onResults(results){
+  const canvas = document.getElementById('outputCanvas');
+  const video  = document.getElementById('inputVideo');
+  canvas.width  = video.videoWidth  || 1280;
+  canvas.height = video.videoHeight || 720;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  if(!results.poseLandmarks) return;
+  const lm = results.poseLandmarks;
+  const W = canvas.width, H = canvas.height;
+
+  // ランドマーク描画
+  drawConnectors(ctx, lm, POSE_CONNECTIONS,
+    {color:'rgba(0,212,255,0.4)', lineWidth:2});
+  drawLandmarks(ctx, lm,
+    {color:'rgba(0,212,255,0.8)', lineWidth:1, radius:3});
+
+  // ─ 指標計算 ─
+  const get = i => ({x: lm[i].x*W, y: lm[i].y*H, z: lm[i].z, v: lm[i].visibility});
+
+  // 耳の中点
+  const earL=get(7), earR=get(8);
+  const ear  = {x:(earL.x+earR.x)/2, y:(earL.y+earR.y)/2};
+
+  // 足首の中点
+  const ankL=get(27), ankR=get(28);
+  const ank  = {x:(ankL.x+ankR.x)/2, y:(ankL.y+ankR.y)/2};
+
+  // 股関節中点
+  const hipL=get(23), hipR=get(24);
+  const hip  = {x:(hipL.x+hipR.x)/2, y:(hipL.y+hipR.y)/2};
+
+  // GT = arctan2(ear_x - ank_x, ank_y - ear_y)  [画面座標: y下=増加]
+  const gt_rad = Math.atan2(ear.x - ank.x, ank.y - ear.y);
+  const gt = gt_rad * 180 / Math.PI;
+
+  // Head_AP = ear.x の相対値（画面幅で正規化 → 相対変位）
+  const apRaw = (ear.x / W - 0.5) * 100;  // -50〜+50 の相対値
+  history.ap.push(apRaw);
+  if(history.ap.length > HIST) history.ap.shift();
+  const apMean = history.ap.reduce((s,v)=>s+v,0)/history.ap.length;
+  const ap = apRaw - apMean;
+
+  // PelvisTilt 近似 = arctan2(hip_y - ank_y, hip_x差) → 骨盤の高さ/幅の角度
+  const hipSpan = Math.abs(hipR.x - hipL.x);
+  const ankSpan = Math.abs(ankR.x - ankL.x);
+  const ptApprox = Math.atan2(hipSpan - ankSpan, hip.y - ank.y) * 180/Math.PI;
+
+  // Head_AP加速度（2階差分）
+  let accel = 0;
+  if(history.ap.length >= 3){
+    const n = history.ap.length;
+    accel = (history.ap[n-1] - 2*history.ap[n-2] + history.ap[n-3]) * (30*30);
+  }
+
+  // 踵接地検出（足首y値の局所最大）
+  const ankY = (ankL.y + ankR.y) / 2;
+  history.hs.push({y: ankY, t: Date.now(), gt, ap, accel});
+  if(history.hs.length > 60) history.hs.shift();
+  let heelStrike = false;
+  const hn = history.hs.length;
+  if(hn >= 3){
+    const prev2=history.hs[hn-3].y, prev1=history.hs[hn-2].y, cur=history.hs[hn-1].y;
+    if(prev1 > prev2 && prev1 > cur && prev1 > 0.85){
+      heelStrike = true;
+      const side = ankL.y > ankR.y ? 'R' : 'L';
+      logHS(side, gt, accel);
+    }
+  }
+
+  // GT履歴
+  history.gt.push(gt);
+  if(history.gt.length > HIST) history.gt.shift();
+
+  // ─ 骨格ライン強調 ─
+  // Ear-Ankle 線（GTライン）
+  ctx.beginPath();
+  ctx.moveTo(ear.x, ear.y);
+  ctx.lineTo(ank.x, ank.y);
+  ctx.strokeStyle = Math.abs(gt) <= 17 ? 'rgba(0,255,136,0.8)' : 'rgba(255,68,102,0.9)';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([6,4]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // GT角度テキスト
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px JetBrains Mono, monospace';
+  ctx.fillText(`GT: ${gt.toFixed(1)}°`, ear.x + 12, ear.y - 8);
+
+  // ヒールストライクフラッシュ
+  if(heelStrike){ hsFlash = 8; }
+  if(hsFlash > 0){
+    ctx.fillStyle = `rgba(0,255,136,${hsFlash/8*0.3})`;
+    ctx.fillRect(0,0,W,H);
+    document.getElementById('hsIndicator').style.display='flex';
+    hsFlash--;
+  } else {
+    document.getElementById('hsIndicator').style.display='none';
+  }
+
+  // ─ UI更新 ─
+  updateGauges(gt, ap, ptApprox, accel);
+  updateCharts();
+  updateOverlay(gt, accel);
+  updateStage(gt, ptApprox, accel);
+}
+
+// ─── ゲージ更新 ───
+function setGaugeColor(id, ok){
+  const el = document.getElementById(id);
+  el.classList.remove('ok','warn','danger');
+  if(ok === true) el.classList.add('ok');
+  else if(ok === false) el.classList.add('danger');
+  else el.classList.add('warn');
+}
+function updateGauges(gt, ap, pt, accel){
+  const fmt = (v,d=1)=>v.toFixed(d);
+  document.getElementById('valGT').textContent = fmt(gt);
+  document.getElementById('valAP').textContent = fmt(ap,0);
+  document.getElementById('valPT').textContent = fmt(pt,0);
+  document.getElementById('valHS').textContent = fmt(Math.abs(accel),0);
+
+  const pctGT = Math.max(0,Math.min(100,(gt-(-20))/(20-(-20))*100));
+  const pctAP = Math.max(0,Math.min(100,(ap+30)/60*100));
+  const pctPT = Math.max(0,Math.min(100,(pt-(-30))/(30-(-30))*100));
+  const pctAC = Math.max(0,Math.min(100,Math.log10(Math.max(1,Math.abs(accel)))/4*100));
+
+  document.getElementById('barGT').style.width = pctGT+'%';
+  document.getElementById('barAP').style.width = pctAP+'%';
+  document.getElementById('barPT').style.width = pctPT+'%';
+  document.getElementById('barHS').style.width = pctAC+'%';
+
+  setGaugeColor('gaugeGT', gt >= REF.gt.lo && gt <= REF.gt.hi);
+  setGaugeColor('gaugeAP', Math.abs(ap) < 15);
+  setGaugeColor('gaugePT', pt >= REF.pt.lo && pt <= REF.pt.hi);
+}
+
+// ─── チャート描画 ───
+function updateCharts(){
+  drawLineChart('gtChart', history.gt, '#00d4ff', -20, 20,
+    [{y:-13,c:'rgba(0,255,136,.3)'},{y:17,c:'rgba(0,255,136,.3)'}]);
+  drawLineChart('apChart', history.ap.map((_,i,a)=>a[i]-(a.reduce((s,v)=>s+v,0)/a.length)),
+    '#a78bfa', -20, 20, []);
+}
+
+function drawLineChart(id, data, color, yMin, yMax, refs){
+  const canvas = document.getElementById(id);
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth||348, H = canvas.height;
+  canvas.width = W;
+  ctx.clearRect(0,0,W,H);
+
+  // 背景
+  ctx.fillStyle = '#1e2940'; ctx.fillRect(0,0,W,H);
+
+  // 参照ライン
+  const toY = v => H - (v-yMin)/(yMax-yMin)*H;
+  refs.forEach(r=>{
+    ctx.beginPath();
+    ctx.strokeStyle = r.c; ctx.lineWidth=1; ctx.setLineDash([4,4]);
+    ctx.moveTo(0,toY(r.y)); ctx.lineTo(W,toY(r.y)); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+  // ゼロライン
+  ctx.beginPath(); ctx.strokeStyle='rgba(255,255,255,.1)'; ctx.lineWidth=1;
+  ctx.moveTo(0,toY(0)); ctx.lineTo(W,toY(0)); ctx.stroke();
+
+  if(data.length < 2) return;
+  const step = W / (HIST-1);
+  ctx.beginPath(); ctx.strokeStyle=color; ctx.lineWidth=1.5;
+  data.forEach((v,i)=>{
+    const x=i*step, y=toY(Math.max(yMin,Math.min(yMax,v)));
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+
+  // 現在値ドット
+  const last=data[data.length-1];
+  ctx.beginPath();
+  ctx.arc((data.length-1)*step, toY(Math.max(yMin,Math.min(yMax,last))), 4, 0, Math.PI*2);
+  ctx.fillStyle=color; ctx.fill();
+}
+
+// ─── オーバーレイ ───
+function updateOverlay(gt, accel){
+  document.getElementById('overlayGT').textContent = gt.toFixed(1);
+  document.getElementById('overlayAC').textContent = Math.abs(accel).toFixed(0);
+}
+
+// ─── ヒールストライクログ ───
+function logHS(side, gt, accel){
+  const log = document.getElementById('hsLog');
+  const time = new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const item = document.createElement('div');
+  item.className='hs-item';
+  item.innerHTML=`<span class="hs-side">${side}</span> ${time}&nbsp;&nbsp;GT=${gt.toFixed(1)}°&nbsp;&nbsp;a=${Math.abs(accel).toFixed(0)}`;
+  log.insertBefore(item, log.firstChild);
+  if(log.children.length > 20) log.removeChild(log.lastChild);
+}
+
+// ─── Stage 判定 ───
+const STAGE_DEF=[
+  {n:0,label:'Stage 0：強度な hypervigilance',color:'#ff4466',
+   icon:'🚫',cond:(gt,pt,ac)=>isNaN(gt)},
+  {n:1,label:'Stage 1：遠隔刺激が有効な段階',color:'#f59e0b',
+   icon:'🤲',cond:(gt,pt,ac)=>Math.abs(ac)>1500},
+  {n:2,label:'Stage 2：分節性回復中',color:'#0ea5e9',
+   icon:'🔓',cond:(gt,pt,ac)=>Math.abs(gt)>13||Math.abs(pt)>25},
+  {n:3,label:'Stage 3：アフォーダンスが有効',color:'#a78bfa',
+   icon:'🌍',cond:(gt,pt,ac)=>Math.abs(gt)<=13&&Math.abs(ac)<1500&&Math.abs(pt)>15},
+  {n:4,label:'Stage 4：内受容感覚の統合',color:'#00ff88',
+   icon:'💫',cond:(gt,pt,ac)=>Math.abs(gt)<=13&&Math.abs(ac)<1000&&Math.abs(pt)<=15},
+];
+function updateStage(gt, pt, accel){
+  let stage = STAGE_DEF[4]; // デフォルト
+  for(const s of STAGE_DEF){
+    if(s.cond(gt,pt,accel)){stage=s;break;}
+  }
+  const el=document.getElementById('stageIndicator');
+  el.style.borderColor=stage.color;
+  el.style.background=stage.color+'18';
+  el.innerHTML=`<div class="stage-num" style="color:${stage.color}">Stage ${stage.n}</div>
+    <div class="stage-name">${stage.icon} ${stage.label}</div>`;
+}
+
+// ─── Before/After 記録 ───
+function getSnapshot(){
+  if(!history.gt.length) return null;
+  const gt = history.gt.slice(-30).reduce((s,v)=>s+v,0)/Math.min(30,history.gt.length);
+  return {gt, ts: new Date().toISOString()};
+}
+function recordBefore(){
+  beforeRecord = getSnapshot();
+  if(!beforeRecord) return;
+  document.getElementById('cmpBeforeGT').textContent = beforeRecord.gt.toFixed(1)+'°';
+  document.getElementById('compareEmpty').style.display='none';
+  document.getElementById('compareGrid').style.display='grid';
+  document.getElementById('btnAfter').style.background='#ff4466';
+  document.getElementById('btnAfter').textContent='🔴 After 記録（介入後）';
+}
+function recordAfter(){
+  afterRecord = getSnapshot();
+  if(!afterRecord) return;
+  document.getElementById('cmpAfterGT').textContent = afterRecord.gt.toFixed(1)+'°';
+
+  const diff = afterRecord.gt - beforeRecord.gt;
+  const improve = Math.abs(afterRecord.gt) < Math.abs(beforeRecord.gt);
+  const msg = document.getElementById('cmpMessage');
+  msg.style.display='block';
+  if(improve){
+    const pct = Math.abs((Math.abs(afterRecord.gt)-Math.abs(beforeRecord.gt))/Math.abs(beforeRecord.gt)*100);
+    msg.innerHTML=`<span class="diff-good">✅ GT 改善：${Math.abs(diff).toFixed(1)}° (${pct.toFixed(0)}%)</span>`;
+  } else {
+    msg.innerHTML=`<span class="diff-neutral">— GT 変化：${diff>0?'+':''}${diff.toFixed(1)}°</span>`;
+  }
+  document.getElementById('btnSave').disabled=false;
+}
+
+// ─── セッション保存 ───
+function saveResult(){
+  if(!beforeRecord||!afterRecord) return;
+  const session={
+    date: new Date().toLocaleDateString('ja-JP'),
+    before_gt: beforeRecord.gt,
+    after_gt:  afterRecord.gt,
+    improve: Math.abs(afterRecord.gt) < Math.abs(beforeRecord.gt),
+  };
+  sessions.push(session);
+  localStorage.setItem('somaCamera', JSON.stringify(sessions));
+  alert(`✅ Session ${sessions.length} を保存しました\nBefore: ${beforeRecord.gt.toFixed(1)}° → After: ${afterRecord.gt.toFixed(1)}°`);
+  document.getElementById('btnSave').disabled=true;
+}
+
+// ─── 初期化 ───
+document.getElementById('loadingOverlay').style.display='none';
+window.addEventListener('resize', updateCharts);
+</script>
+
+<script>
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js')
+      .then(()=>console.log('SW registered'))
+      .catch(e=>console.log('SW error',e));
+  });
+}
+</script>
+</body>
+</html>

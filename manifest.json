@@ -1,0 +1,25 @@
+{
+  "name": "SOMA — Somatic Observation & Motion Analysis",
+  "short_name": "SOMA",
+  "description": "リアルタイム歩行姿勢計測・即時効果可視化システム",
+  "start_url": "./soma_camera.html",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#0a0e1a",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "soma_icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "soma_icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["medical", "health", "fitness"],
+  "lang": "ja"
+}
